@@ -1,130 +1,89 @@
-# fleet-template-v1
+# Oh My Bash template
 
-## What This Template Is
+Provisioned from [`Qode-Fleet-Control/fleet-template-v1`](https://github.com/Qode-Fleet-Control/fleet-template-v1) — the fleet
+lifecycle contract (`bin/`, `fleet.conf`, `compose.yaml`, deploy workflows) with a
+Oh My Bash starter laid on top. **A job, not a service**: the image's default command runs the
+check and exits 0 on success; nothing listens on `$PORT`.
 
-`fleet-template-v1` is a **language-agnostic app lifecycle harness** for apps
-managed by the fleet platform. It gives any app — Node, Python, Go, a Docker
-Compose stack, anything — a uniform way to be deployed and controlled, without
-the fleet needing to know a single thing about your stack.
+## What it is
 
-The fleet injects runtime variables into the environment (`PORT`, `BASE_PATH`,
-`DATABASE_URL`) and calls `./bin/run` to deploy. Everything project-specific —
-how to install, build, and start your app — lives in **one file: `fleet.conf`**.
-That is the only file you edit per project.
+A versioned bash setup (`VERSION`, currently 1.0.0) on [Oh My Bash](https://ohmybash.nntoan.com):
 
-## Repository Structure
+| path | what |
+|---|---|
+| `bash/.bashrc` | the rc file — theme, plugins, completions, aliases; no self-update |
+| `bash/custom/plugins/qode/qode.plugin.sh` | the setup's own plugin (`qode_hello`, `mkcd`, `ll`) |
+| `bash/custom/themes/qode/qode.theme.sh` | the setup's own theme: `qode <cwd> (<branch>*) $` |
+| `scripts/install.sh` | installs Oh My Bash at a pinned commit (official installer, `--prefix` mode) |
+| `scripts/check.sh` | **the job**: interactive bash with this rc file, checks the setup loaded |
 
-```
-fleet.conf        ← the only file you edit per project
-.env              ← local-only env vars (gitignored)
-bin/
-  _common.sh      ← shared logic; never edit this
-  run             ← install + build + start (called by the fleet)
-  start           ← start only (no rebuild)
-  restart         ← stop + full run
-  reload          ← hot-reload config without rebuild
-  stop            ← stop the running process
-```
+`.bashrc` points `OSH_CUSTOM` at its own `custom/` directory, so the repo is the single
+source of the setup. In the image `~/.bashrc` is a symlink to it.
 
-## The One File You Edit: `fleet.conf`
+## Run it
 
-`fleet.conf` is sourced as shell by the lifecycle scripts. Fill in the commands
-for your stack; leave any command empty (`''`) to skip that step.
+**With docker** (what the fleet does):
 
-```sh
-NAME="my-app"           # label shown in fleet logs
-PORT="3000"             # default port (fleet overrides via $PORT env var)
-HEALTH_PATH="/"         # HTTP path that returns 200 when the app is ready
+    docker compose build
+    docker compose run --rm app          # the check; exit 0 = setup loaded
+    docker compose run --rm app bash     # try the shell itself
 
-INSTALL_CMD='npm ci'
-BUILD_CMD='npm run build'
-START_CMD='node dist/server.js'   # must listen on $PORT; run in foreground
-RELOAD_CMD=''           # optional; empty → falls back to stop+start
-```
+**Without docker** (needs bash 4+, git, curl; your `~/.bashrc` is left alone):
 
-> **Critical rule:** single-quote any command that uses `$PORT` or
-> `$BASE_PATH`. Single quotes defer variable expansion to **runtime** — when the
-> command actually runs, with the fleet-injected value — rather than at the
-> moment `fleet.conf` is sourced (when those values aren't set yet). Use
-> `START_CMD='gunicorn app:app --bind 0.0.0.0:$PORT'`, never double quotes.
+    bash scripts/install.sh              # = fleet.conf INSTALL_CMD -> ./.local/share/oh-my-bash
+    bash scripts/check.sh
+    OSH="$PWD/.local/share/oh-my-bash" bash --rcfile bash/.bashrc   # use it
 
-## How the Lifecycle Works
+## Origin
 
-| Script | What it does | When to use |
-| --- | --- | --- |
-| `bin/run` | `INSTALL_CMD` → `BUILD_CMD` → `START_CMD` | Fleet deploy, fresh start |
-| `bin/start` | `START_CMD` only | Restart without rebuild |
-| `bin/restart` | stop + `bin/run` | After a code/dep change |
-| `bin/reload` | `RELOAD_CMD`, or stop+start if empty | After a config-only change |
-| `bin/stop` | Kill by pidfile or port | Tear down |
+Oh My Bash's official installer, pinned to commit `abf846186ab0a8a41ec5888e827ece6277dfe446`
+(scripts/install.sh):
 
-> The process PID is written to `.fleet/app.pid` so subsequent `stop`/`restart`
-> calls can find and terminate it reliably. If the pidfile is missing or stale,
-> `stop` falls back to freeing whatever is listening on `$PORT`.
+    bash install.sh --unattended --prefix=<prefix>   # install.sh from raw.githubusercontent.com/ohmybash/oh-my-bash/<commit>/tools/install.sh
 
-## How to Apply This to Your Project
+The bash setup itself (`bash/`) is hand-written to Oh My Bash's customisation layout
+(`$OSH_CUSTOM/plugins/<name>/<name>.plugin.sh`, `$OSH_CUSTOM/themes/<name>/<name>.theme.sh`)
+and its template `.bashrc`.
 
-### Step 1 — Copy the template into your repo
+## Deviations from stock output, and why
 
-```sh
-cp -r fleet-template-v1/* my-project/
-```
+- **`--prefix` install instead of the per-user one.** The per-user mode moves your
+  `~/.bashrc` aside and writes its template there; `--prefix` only clones (into
+  `<prefix>/share/oh-my-bash`), so the versioned `.bashrc` here stays the source and a
+  local install never touches your dotfiles.
+- **Pinned commit.** The installer clones `master`; `scripts/install.sh` then checks out
+  the pinned commit and `.bashrc` sets `DISABLE_AUTO_UPDATE`.
+## Verified
 
-Or, if starting fresh, just clone it and work from `main`.
+**The docker image has NOT been built or run yet**: on 2026-10-05 the shared build host's docker disk was full (0-2 GB free for over 8 hours), so `docker compose build` was never attempted. Run `docker compose build && docker compose run --rm app` once before trusting it.
 
-### Step 2 — Edit `fleet.conf` (the only required change)
+Without docker (2026-10-05, bash 5.2, throwaway `$HOME`): `bash scripts/install.sh`
+installed Oh My Bash at the pinned commit into `./.local/share/oh-my-bash`, and
+`bash scripts/check.sh` passed — oh-my-bash, git + qode plugins, qode theme, prompt
+renders, nothing unexpected on stderr. `$HOME` was left untouched.
 
-Fill in your stack's commands. Per-stack examples:
 
-```sh
-# Node.js
-INSTALL_CMD='npm ci'
-BUILD_CMD='npm run build'
-START_CMD='node dist/index.js'
+## Fleet lifecycle
 
-# Python (Gunicorn)
-INSTALL_CMD='pip install -r requirements.txt'
-BUILD_CMD=''
-START_CMD='gunicorn app:app --bind 0.0.0.0:$PORT'
+`fleet.conf` drives every script in `bin/` (see `docs/fleet-lifecycle.md`). On the fleet
+the docker runtime runs `DOCKER_BUILD_CMD` (`docker compose build`) and, because this is
+a job and not a service, stops there: `DOCKER_START_CMD` is empty, the same as
+`START_CMD`. Run the job itself with `docker compose run --rm app`.
 
-# Go
-INSTALL_CMD=''
-BUILD_CMD='go build -o ./out/server ./cmd/server'
-START_CMD='./out/server'
+    ./bin/run                    # docker runtime: builds the image, then stops (no server)
+    docker compose run --rm app  # runs the job; exit code 0 = pass
+    FLEET_RUNTIME=process ./bin/run   # no docker: runs INSTALL_CMD, then stops at start
 
-# Docker Compose
-INSTALL_CMD=''
-BUILD_CMD='docker compose build'
-START_CMD='docker compose up'
-RELOAD_CMD='docker compose up -d --no-build'
-```
+`bin/run` ends with the template's own "no START_CMD" message — that is intentional.
 
-### Step 3 — Set local env vars in `.env` (gitignored)
+## Serving over HTTP
 
-```sh
-APP_NAME=My App
-DATABASE_URL=postgres://localhost/mydb
-```
+Fleet apps are served at the root of their own hostname
+(`https://<hash>.<FLEET_APP_DOMAIN>/`). **This repo has no HTTP surface**: `PORT`,
+`HEALTH_PATH` and `START_CMD` are empty and `compose.yaml` publishes nothing. If you add
+an HTTP endpoint, listen on `0.0.0.0:$PORT` (read at runtime), serve at `/`, set `PORT`,
+`HEALTH_PATH`, `START_CMD` and `DOCKER_START_CMD='docker compose up --remove-orphans'`
+in `fleet.conf`, and publish `"${PORT:-N}:${PORT:-N}"` in `compose.yaml`.
 
-### Step 4 — Verify standalone
-
-```sh
-PORT=3001 bin/run      # should install, build, and serve on 3001
-curl http://localhost:3001/   # should 200
-```
-
-### Step 5 — Connect to the fleet
-
-Point the fleet at your repo. It will clone it, inject `PORT` / `BASE_PATH` /
-`DATABASE_URL`, and call `bin/run`. As long as your `START_CMD` listens on
-`$PORT` and `HEALTH_PATH` returns 200, the fleet will mark the app healthy.
-
-## Key Invariants
-
-- **`START_CMD` must run in the foreground and listen on `$PORT`.** Do not use a
-  dev server — HMR / hot-reload chunks 404 behind the ingress and will break the
-  app.
-- **Never put secrets in `fleet.conf`** — it's committed. Use `.env` locally;
-  the fleet injects secrets via the environment.
-- **`bin/_common.sh` is shared infrastructure** — don't edit it per project. All
-  project-specific configuration belongs in `fleet.conf`.
+`compose.yaml` passes the fleet's variables (`DATABASE_URL`, `REDIS_URL`, `S3_*`,
+`SMTP_*` …) through to the container without values; this template reads none of them.
